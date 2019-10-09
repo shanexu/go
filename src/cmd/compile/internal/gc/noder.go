@@ -5,6 +5,11 @@
 package gc
 
 import (
+	"cmd/compile/internal/syntax"
+	"cmd/compile/internal/types"
+	"cmd/internal/obj"
+	"cmd/internal/objabi"
+	"cmd/internal/src"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -12,12 +17,6 @@ import (
 	"strconv"
 	"strings"
 	"unicode/utf8"
-
-	"cmd/compile/internal/syntax"
-	"cmd/compile/internal/types"
-	"cmd/internal/obj"
-	"cmd/internal/objabi"
-	"cmd/internal/src"
 )
 
 // parseFiles concurrently parses files into *syntax.File structures.
@@ -292,22 +291,22 @@ func (p *noder) node() {
 
 		contextPkgName := "context"
 		isContextPkgDotImport := false
-		hasFmtImport := false
+		hasOpentracingImport := false
 
 		for _, d := range p.file.DeclList {
 			switch d := d.(type) {
 			case *syntax.ImportDecl:
-				if d.Path.Value == `"fmt"` {
-					hasFmtImport = true
+				if d.Path.Value == `"github.com/opentracing/opentracing-go"` {
+					hasOpentracingImport = true
 				}
 			}
-			if hasFmtImport {
+			if hasOpentracingImport {
 				break
 			}
 		}
 
-		if !hasFmtImport {
-			d := &syntax.ImportDecl{Path:&syntax.BasicLit{Value:`"fmt"`, Kind:syntax.StringLit}}
+		if !hasOpentracingImport {
+			d := &syntax.ImportDecl{Path: &syntax.BasicLit{Value: `"github.com/opentracing/opentracing-go"`, Kind: syntax.StringLit}}
 			p.file.DeclList = append([]syntax.Decl{d}, p.file.DeclList...)
 		}
 
@@ -356,16 +355,23 @@ func (p *noder) node() {
 
 					funcName := d.Name.Value
 
-					b := &syntax.ExprStmt{
-						X: &syntax.CallExpr{
-							Fun: &syntax.SelectorExpr{
-								X:   &syntax.Name{Value: "fmt"},
-								Sel: &syntax.Name{Value: "Println"},
+					b := &syntax.AssignStmt{
+						Op: syntax.Def,
+						Lhs: &syntax.ListExpr{
+							ElemList: []syntax.Expr{
+								&syntax.Name{Value: "span"},
+								&syntax.Name{Value: "ctx"},
 							},
-							ArgList: []syntax.Expr{&syntax.BasicLit{
-								Kind:  syntax.StringLit,
-								Value: fmt.Sprintf("%q", funcName+" start..."),
-							}},
+						},
+						Rhs: &syntax.CallExpr{
+							Fun: &syntax.SelectorExpr{
+								X:   &syntax.Name{Value: "opentracing"},
+								Sel: &syntax.Name{Value: "StartSpanFromContext"},
+							},
+							ArgList: []syntax.Expr{
+								&syntax.Name{Value: "ctx"},
+								&syntax.BasicLit{Value: fmt.Sprintf("%q", funcName), Kind: syntax.StringLit},
+							},
 						},
 					}
 
@@ -373,13 +379,9 @@ func (p *noder) node() {
 						Tok: syntax.Defer,
 						Call: &syntax.CallExpr{
 							Fun: &syntax.SelectorExpr{
-								X:   &syntax.Name{Value: "fmt"},
-								Sel: &syntax.Name{Value: "Println"},
+								X:   &syntax.Name{Value: "span"},
+								Sel: &syntax.Name{Value: "Finish"},
 							},
-							ArgList: []syntax.Expr{&syntax.BasicLit{
-								Kind:  syntax.StringLit,
-								Value: fmt.Sprintf("%q", funcName+" stop..."),
-							}},
 						},
 					}
 

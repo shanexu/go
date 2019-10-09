@@ -897,18 +897,18 @@ Found:
 			continue
 		}
 		if enableOpentracing(filename) {
-			hasFmtImport := false
+			hasOpentracingImport := false
 			for _, i := range pf.Imports {
-				if i.Path.Value == `"fmt"` {
-					hasFmtImport = true
+				if i.Path.Value == `"github.com/opentracing/opentracing-go"` {
+					hasOpentracingImport = true
 					break
 				}
 			}
-			if !hasFmtImport {
+			if !hasOpentracingImport {
 				pf.Imports = append(pf.Imports, &ast.ImportSpec{
 					Path: &ast.BasicLit{
 						Kind:     token.STRING,
-						Value:    `"fmt"`,
+						Value:    `"github.com/opentracing/opentracing-go"`,
 					},
 				})
 				if len(pf.Decls) > 0 {
@@ -917,7 +917,7 @@ Found:
 						d.Specs = append(d.Specs, &ast.ImportSpec{
 							Path: &ast.BasicLit{
 								Kind:     token.STRING,
-								Value:    `"fmt"`,
+								Value:    `"github.com/opentracing/opentracing-go"`,
 							},
 						})
 					}
