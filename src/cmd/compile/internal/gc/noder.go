@@ -354,13 +354,21 @@ func (p *noder) node() {
 					}
 
 					funcName := d.Name.Value
+					if d.Type.ParamList[0].Name == nil {
+						d.Type.ParamList[0].Name = &syntax.Name{Value: "__ctx__"}
+					}
+					if d.Type.ParamList[0].Name.Value == "_" {
+						d.Type.ParamList[0].Name.Value = "__ctx__"
+					}
+					ctxParamName := d.Type.ParamList[0].Name.Value
+					spanName := "__span__"
 
 					b := &syntax.AssignStmt{
 						Op: syntax.Def,
 						Lhs: &syntax.ListExpr{
 							ElemList: []syntax.Expr{
-								&syntax.Name{Value: "span"},
-								&syntax.Name{Value: "ctx"},
+								&syntax.Name{Value: spanName},
+								&syntax.Name{Value: ctxParamName},
 							},
 						},
 						Rhs: &syntax.CallExpr{
@@ -369,23 +377,48 @@ func (p *noder) node() {
 								Sel: &syntax.Name{Value: "StartSpanFromContext"},
 							},
 							ArgList: []syntax.Expr{
-								&syntax.Name{Value: "ctx"},
+								&syntax.Name{Value: ctxParamName},
 								&syntax.BasicLit{Value: fmt.Sprintf("%q", funcName), Kind: syntax.StringLit},
 							},
 						},
+					}
+
+					stmts := []syntax.Stmt{b}
+
+					var logArgs []syntax.Expr
+					for _, p := range d.Type.ParamList[1:] {
+						if p.Name == nil || p.Name.Value == "_" {
+							continue
+						}
+						logArgs = append(logArgs, &syntax.BasicLit{Value: fmt.Sprintf("%q", p.Name.Value), Kind: syntax.StringLit})
+						logArgs = append(logArgs, &syntax.Name{Value: p.Name.Value})
+					}
+					if len(logArgs) > 0 {
+						a := &syntax.ExprStmt{
+							X: &syntax.CallExpr{
+								Fun: &syntax.SelectorExpr{
+									X:   &syntax.Name{Value: spanName},
+									Sel: &syntax.Name{Value: "LogKV"},
+								},
+								ArgList: logArgs,
+							},
+						}
+						stmts = append(stmts, a)
 					}
 
 					e := &syntax.CallStmt{
 						Tok: syntax.Defer,
 						Call: &syntax.CallExpr{
 							Fun: &syntax.SelectorExpr{
-								X:   &syntax.Name{Value: "span"},
+								X:   &syntax.Name{Value: spanName},
 								Sel: &syntax.Name{Value: "Finish"},
 							},
 						},
 					}
 
-					d.Body.List = append([]syntax.Stmt{b, e}, d.Body.List...)
+					stmts = append(stmts, e)
+
+					d.Body.List = append(stmts, d.Body.List...)
 
 				}
 			}
