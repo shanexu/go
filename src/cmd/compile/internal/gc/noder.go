@@ -234,12 +234,161 @@ type linkname struct {
 	remote string
 }
 
+var (
+	opentracingIncludes []string
+	opentracingExcludes []string
+)
+
+func init() {
+	base := os.Getenv("OPENTRACING_BASE")
+	includes := os.Getenv("OPENTRACING_INCLUDES")
+	if includes != "" {
+		opentracingIncludes = strings.Split(includes, ",")
+		if base != "" {
+			for i, p := range opentracingIncludes {
+				if !filepath.IsAbs(p) {
+					opentracingIncludes[i] = filepath.Join(base, p)
+				}
+			}
+		}
+	}
+	excludes := os.Getenv("OPENTRACING_EXCLUDES")
+	if excludes != "" {
+		opentracingExcludes = strings.Split(excludes, ",")
+		if base != "" {
+			for i, p := range opentracingExcludes {
+				if !filepath.IsAbs(p) {
+					opentracingExcludes[i] = filepath.Join(base, p)
+				}
+			}
+		}
+	}
+}
+
+func enableOpentracing(path string) bool {
+	for _, p := range opentracingIncludes {
+		matched, _ := filepath.Match(p, path)
+		if matched {
+			for _, p := range opentracingExcludes {
+				matched, _ := filepath.Match(p, path)
+				if matched {
+					return false
+				}
+			}
+			return true
+		}
+	}
+	return false
+}
+
 func (p *noder) node() {
 	types.Block = 1
 	imported_unsafe = false
 
 	p.setlineno(p.file.PkgName)
 	mkpackage(p.file.PkgName.Value)
+
+	if enableOpentracing(p.file.PkgName.Pos().RelFilename()) {
+
+		contextPkgName := "context"
+		isContextPkgDotImport := false
+		hasFmtImport := false
+
+		for _, d := range p.file.DeclList {
+			switch d := d.(type) {
+			case *syntax.ImportDecl:
+				if d.Path.Value == `"fmt"` {
+					hasFmtImport = true
+				}
+			}
+			if hasFmtImport {
+				break
+			}
+		}
+
+		if !hasFmtImport {
+			d := &syntax.ImportDecl{Path:&syntax.BasicLit{Value:`"fmt"`, Kind:syntax.StringLit}}
+			p.file.DeclList = append([]syntax.Decl{d}, p.file.DeclList...)
+		}
+
+		for _, d := range p.file.DeclList {
+			switch d := d.(type) {
+			case *syntax.ImportDecl:
+				if d.Path.Value != `"context"` {
+					continue
+				}
+				if d.LocalPkgName != nil {
+					contextPkgName = d.LocalPkgName.Value
+					if contextPkgName == "." {
+						isContextPkgDotImport = true
+					}
+				}
+				break
+			}
+		}
+
+		for _, d := range p.file.DeclList {
+			switch d := d.(type) {
+			case *syntax.FuncDecl:
+				if len(d.Type.ParamList) > 0 {
+					isFirstContextParam := false
+					if isContextPkgDotImport {
+						t, _ := d.Type.ParamList[0].Type.(*syntax.Name)
+						if t == nil {
+							continue
+						}
+						isFirstContextParam = t.Value == "Context"
+					} else {
+						t, _ := d.Type.ParamList[0].Type.(*syntax.SelectorExpr)
+						if t == nil {
+							continue
+						}
+						x, _ := t.X.(*syntax.Name)
+						if x == nil {
+							continue
+						}
+						s := t.Sel.Value
+						isFirstContextParam = x.Value == contextPkgName && s == "Context"
+					}
+					if !isFirstContextParam {
+						continue
+					}
+
+					funcName := d.Name.Value
+
+					b := &syntax.ExprStmt{
+						X: &syntax.CallExpr{
+							Fun: &syntax.SelectorExpr{
+								X:   &syntax.Name{Value: "fmt"},
+								Sel: &syntax.Name{Value: "Println"},
+							},
+							ArgList: []syntax.Expr{&syntax.BasicLit{
+								Kind:  syntax.StringLit,
+								Value: fmt.Sprintf("%q", funcName+" start..."),
+							}},
+						},
+					}
+
+					e := &syntax.CallStmt{
+						Tok: syntax.Defer,
+						Call: &syntax.CallExpr{
+							Fun: &syntax.SelectorExpr{
+								X:   &syntax.Name{Value: "fmt"},
+								Sel: &syntax.Name{Value: "Println"},
+							},
+							ArgList: []syntax.Expr{&syntax.BasicLit{
+								Kind:  syntax.StringLit,
+								Value: fmt.Sprintf("%q", funcName+" stop..."),
+							}},
+						},
+					}
+
+					d.Body.List = append([]syntax.Stmt{b, e}, d.Body.List...)
+
+				}
+			}
+		}
+	}
 
 	xtop = append(xtop, p.decls(p.file.DeclList)...)
 

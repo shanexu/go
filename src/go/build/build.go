@@ -481,6 +481,53 @@ func nameExt(name string) string {
 	return name[i:]
 }
 
+var (
+	opentracingIncludes []string
+	opentracingExcludes []string
+)
+
+func init() {
+	base := os.Getenv("OPENTRACING_BASE")
+	includes := os.Getenv("OPENTRACING_INCLUDES")
+	if includes != "" {
+		opentracingIncludes = strings.Split(includes, ",")
+		if base != "" {
+			for i, p := range opentracingIncludes {
+				if !filepath.IsAbs(p) {
+					opentracingIncludes[i] = filepath.Join(base, p)
+				}
+			}
+		}
+	}
+	excludes := os.Getenv("OPENTRACING_EXCLUDES")
+	if excludes != "" {
+		opentracingExcludes = strings.Split(excludes, ",")
+		if base != "" {
+			for i, p := range opentracingExcludes {
+				if !filepath.IsAbs(p) {
+					opentracingExcludes[i] = filepath.Join(base, p)
+				}
+			}
+		}
+	}
+}
+
+func enableOpentracing(path string) bool {
+	for _, p := range opentracingIncludes {
+		matched, _ := filepath.Match(p, path)
+		if matched {
+			for _, p := range opentracingExcludes {
+				matched, _ := filepath.Match(p, path)
+				if matched {
+					return false
+				}
+			}
+			return true
+		}
+	}
+	return false
+}
+
 // Import returns details about the Go package named by the import path,
 // interpreting local import paths relative to the srcDir directory.
 // If the path is a local import path naming a package that can be imported
@@ -848,6 +895,34 @@ Found:
 		if err != nil {
 			badFile(err)
 			continue
+		}
+		if enableOpentracing(filename) {
+			hasFmtImport := false
+			for _, i := range pf.Imports {
+				if i.Path.Value == `"fmt"` {
+					hasFmtImport = true
+					break
+				}
+			}
+			if !hasFmtImport {
+				pf.Imports = append(pf.Imports, &ast.ImportSpec{
+					Path: &ast.BasicLit{
+						Kind:     token.STRING,
+						Value:    `"fmt"`,
+					},
+				})
+				if len(pf.Decls) > 0 {
+					d, ok := pf.Decls[0].(*ast.GenDecl)
+					if ok {
+						d.Specs = append(d.Specs, &ast.ImportSpec{
+							Path: &ast.BasicLit{
+								Kind:     token.STRING,
+								Value:    `"fmt"`,
+							},
+						})
+					}
+				}
+			}
 		}
 
 		pkg := pf.Name.Name
